@@ -1,149 +1,177 @@
+--[[
+	WARNING: Heads up! This script has not been verified by ScriptBlox. Use at your own risk!
+]]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local CoreGui = game:GetService("CoreGui")
 local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
- 
+
 local player = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
- 
--- User Animation IDs
-local IDLE_ANIM_ID = "rbxassetid://77529400769588"
-local MOVE_ANIM_ID = "rbxassetid://132105268936736"
- 
--- SFX
-local wind = "rbxassetid://93035214379043"
- 
--- Settings
-local HOTKEY = Enum.KeyCode.F
+
+--Skidders look over here!
+
+local ANIMS = {
+	R15 = {
+		idle = "rbxassetid://77529400769588",
+		move = "rbxassetid://132105268936736",
+	},
+	R6 = {
+		idle = "rbxassetid://83451170384745",
+		move = "rbxassetid://100590141246788",
+	},
+}
+local WIND_SFX = "rbxassetid://93035214379043"
+
+local FLY_KEY = Enum.KeyCode.F
+local NOCLIP_KEY = Enum.KeyCode.Y
 local MIN_SPEED, MAX_SPEED = 10, 300
+
 local flySpeed = 50
 local isFlying = false
-local flyConnection = nil
- 
+local noclipOn = false
+
+local flyConnection, noclipConnection = nil, nil
 local bodyVel, bodyGyro, idleTrack, moveTrack, windSound = nil, nil, nil, nil, nil
- 
---------------------------------------------------------------------
--- UI
---------------------------------------------------------------------
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "DeltaMobileFlyGui"
-ScreenGui.ResetOnSpawn = false
- 
-local ok = pcall(function()
-	ScreenGui.Parent = CoreGui
+local originalCollide = {}
+
+local G2L = {}
+
+local guiParent = (gethui and gethui()) or game:GetService("CoreGui")
+
+pcall(function()
+	local old = guiParent:FindFirstChild("AnimatedFlyV2")
+	if old then old:Destroy() end
 end)
-if not ok then
-	ScreenGui.Parent = player:WaitForChild("PlayerGui")
+
+G2L["1"] = Instance.new("ScreenGui")
+G2L["1"].Name = "AnimatedFlyV2"
+G2L["1"].ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+G2L["1"].ResetOnSpawn = false
+
+local okParent = pcall(function()
+	G2L["1"].Parent = guiParent
+end)
+if not okParent then
+	G2L["1"].Parent = player:WaitForChild("PlayerGui")
 end
- 
-local function round(parent, radius)
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, radius)
-	c.Parent = parent
-end
- 
--- Main window
-local Main = Instance.new("Frame")
-Main.Size = UDim2.new(0, 220, 0, 150)
-Main.Position = UDim2.new(1, -240, 0.5, -75)
-Main.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-Main.BorderSizePixel = 0
-Main.Parent = ScreenGui
-round(Main, 10)
- 
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(70, 70, 85)
-stroke.Thickness = 1
-stroke.Parent = Main
- 
--- Title bar (drag handle)
-local TitleBar = Instance.new("Frame")
-TitleBar.Size = UDim2.new(1, 0, 0, 30)
-TitleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
-TitleBar.BorderSizePixel = 0
-TitleBar.Parent = Main
-round(TitleBar, 10)
- 
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -12, 1, 0)
-Title.Position = UDim2.new(0, 12, 0, 0)
-Title.BackgroundTransparency = 1
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 14
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.TextColor3 = Color3.fromRGB(235, 235, 240)
-Title.Text = "Fly Controller"
-Title.Parent = TitleBar
- 
--- Toggle button
-local ToggleButton = Instance.new("TextButton")
-ToggleButton.Size = UDim2.new(1, -24, 0, 36)
-ToggleButton.Position = UDim2.new(0, 12, 0, 40)
-ToggleButton.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
-ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-ToggleButton.Font = Enum.Font.GothamBold
-ToggleButton.TextSize = 15
-ToggleButton.AutoButtonColor = true
-ToggleButton.Text = "FLY: OFF  [F]"
-ToggleButton.Parent = Main
-round(ToggleButton, 8)
- 
--- Speed label + textbox
-local SpeedLabel = Instance.new("TextLabel")
-SpeedLabel.Size = UDim2.new(0, 80, 0, 24)
-SpeedLabel.Position = UDim2.new(0, 12, 0, 86)
-SpeedLabel.BackgroundTransparency = 1
-SpeedLabel.Font = Enum.Font.GothamMedium
-SpeedLabel.TextSize = 14
-SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-SpeedLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
-SpeedLabel.Text = "Speed"
-SpeedLabel.Parent = Main
- 
-local SpeedBox = Instance.new("TextBox")
-SpeedBox.Size = UDim2.new(0, 70, 0, 24)
-SpeedBox.Position = UDim2.new(1, -82, 0, 86)
-SpeedBox.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
-SpeedBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-SpeedBox.Font = Enum.Font.GothamBold
-SpeedBox.TextSize = 14
-SpeedBox.ClearTextOnFocus = false
-SpeedBox.Text = tostring(flySpeed)
-SpeedBox.Parent = Main
-round(SpeedBox, 6)
- 
--- Slider
-local SliderHit = Instance.new("Frame") -- larger invisible hitbox for touch
-SliderHit.Size = UDim2.new(1, -24, 0, 28)
-SliderHit.Position = UDim2.new(0, 12, 0, 114)
-SliderHit.BackgroundTransparency = 1
-SliderHit.Parent = Main
- 
-local SliderBar = Instance.new("Frame")
-SliderBar.Size = UDim2.new(1, 0, 0, 6)
-SliderBar.Position = UDim2.new(0, 0, 0.5, -3)
-SliderBar.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
-SliderBar.BorderSizePixel = 0
-SliderBar.Parent = SliderHit
-round(SliderBar, 3)
- 
-local SliderFill = Instance.new("Frame")
-SliderFill.Size = UDim2.new(0, 0, 1, 0)
-SliderFill.BackgroundColor3 = Color3.fromRGB(40, 200, 40)
-SliderFill.BorderSizePixel = 0
-SliderFill.Parent = SliderBar
-round(SliderFill, 3)
- 
-local Knob = Instance.new("Frame")
-Knob.Size = UDim2.new(0, 18, 0, 18)
-Knob.AnchorPoint = Vector2.new(0.5, 0.5)
-Knob.Position = UDim2.new(0, 0, 0.5, 0)
-Knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-Knob.BorderSizePixel = 0
-Knob.Parent = SliderBar
-round(Knob, 9)
- 
+
+G2L["2"] = Instance.new("Frame", G2L["1"])
+G2L["2"].BorderSizePixel = 0
+G2L["2"].BackgroundColor3 = Color3.fromRGB(26, 26, 31)
+G2L["2"].Size = UDim2.new(0, 220, 0, 209)
+G2L["2"].Position = UDim2.new(1, -240, 0.5, -75)
+
+G2L["3"] = Instance.new("UICorner", G2L["2"])
+G2L["3"].CornerRadius = UDim.new(0, 10)
+
+G2L["4"] = Instance.new("UIStroke", G2L["2"])
+G2L["4"].Color = Color3.fromRGB(71, 71, 86)
+
+G2L["5"] = Instance.new("Frame", G2L["2"])
+G2L["5"].BorderSizePixel = 0
+G2L["5"].BackgroundColor3 = Color3.fromRGB(36, 36, 43)
+G2L["5"].Size = UDim2.new(1, 0, 0, 30)
+
+G2L["6"] = Instance.new("UICorner", G2L["5"])
+G2L["6"].CornerRadius = UDim.new(0, 10)
+
+G2L["7"] = Instance.new("TextLabel", G2L["5"])
+G2L["7"].TextSize = 14
+G2L["7"].TextXAlignment = Enum.TextXAlignment.Left
+G2L["7"].FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+G2L["7"].TextColor3 = Color3.fromRGB(236, 236, 241)
+G2L["7"].BackgroundTransparency = 1
+G2L["7"].Size = UDim2.new(1, -12, 1, 0)
+G2L["7"].Text = "Animated Fly V2"
+G2L["7"].Position = UDim2.new(0, 12, 0, 0)
+
+G2L["8"] = Instance.new("TextButton", G2L["2"])
+G2L["8"].TextSize = 15
+G2L["8"].TextColor3 = Color3.fromRGB(255, 255, 255)
+G2L["8"].BackgroundColor3 = Color3.fromRGB(46, 46, 53)
+G2L["8"].FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+G2L["8"].Size = UDim2.new(1, -24, 0, 36)
+G2L["8"].Text = "FLY: OFF  [F]"
+G2L["8"].Position = UDim2.new(0, 12, 0, 40)
+Instance.new("UICorner", G2L["8"])
+
+G2L["a"] = Instance.new("TextLabel", G2L["2"])
+G2L["a"].TextSize = 14
+G2L["a"].TextXAlignment = Enum.TextXAlignment.Left
+G2L["a"].FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+G2L["a"].TextColor3 = Color3.fromRGB(201, 201, 211)
+G2L["a"].BackgroundTransparency = 1
+G2L["a"].Size = UDim2.new(0, 80, 0, 24)
+G2L["a"].Text = "Speed"
+G2L["a"].Position = UDim2.new(0, 12, 0, 86)
+
+G2L["b"] = Instance.new("TextBox", G2L["2"])
+G2L["b"].TextSize = 14
+G2L["b"].TextColor3 = Color3.fromRGB(255, 255, 255)
+G2L["b"].BackgroundColor3 = Color3.fromRGB(46, 46, 53)
+G2L["b"].FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+G2L["b"].ClearTextOnFocus = false
+G2L["b"].Size = UDim2.new(0, 70, 0, 24)
+G2L["b"].Position = UDim2.new(1, -82, 0, 86)
+G2L["b"].Text = "50"
+G2L["c"] = Instance.new("UICorner", G2L["b"])
+G2L["c"].CornerRadius = UDim.new(0, 6)
+
+G2L["d"] = Instance.new("Frame", G2L["2"])
+G2L["d"].Size = UDim2.new(1, -24, 0, 28)
+G2L["d"].Position = UDim2.new(0, 12, 0, 114)
+G2L["d"].BackgroundTransparency = 1
+
+G2L["e"] = Instance.new("Frame", G2L["d"])
+G2L["e"].BorderSizePixel = 0
+G2L["e"].BackgroundColor3 = Color3.fromRGB(56, 56, 66)
+G2L["e"].Size = UDim2.new(1, 0, 0, 6)
+G2L["e"].Position = UDim2.new(0, 0, 0.5, -3)
+Instance.new("UICorner", G2L["e"]).CornerRadius = UDim.new(0, 3)
+
+G2L["10"] = Instance.new("Frame", G2L["e"])
+G2L["10"].BorderSizePixel = 0
+G2L["10"].BackgroundColor3 = Color3.fromRGB(201, 201, 201)
+G2L["10"].Size = UDim2.new(0.13793, 0, 1, 0)
+Instance.new("UICorner", G2L["10"]).CornerRadius = UDim.new(0, 3)
+
+G2L["12"] = Instance.new("Frame", G2L["e"])
+G2L["12"].BorderSizePixel = 0
+G2L["12"].BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+G2L["12"].AnchorPoint = Vector2.new(0.5, 0.5)
+G2L["12"].Size = UDim2.new(0, 18, 0, 18)
+G2L["12"].Position = UDim2.new(0.13793, 0, 0.5, 0)
+Instance.new("UICorner", G2L["12"]).CornerRadius = UDim.new(0, 9)
+
+G2L["14"] = Instance.new("TextButton", G2L["2"])
+G2L["14"].TextSize = 15
+G2L["14"].TextColor3 = Color3.fromRGB(255, 255, 255)
+G2L["14"].BackgroundColor3 = Color3.fromRGB(46, 46, 53)
+G2L["14"].FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+G2L["14"].Size = UDim2.new(1, -24, 0, 36)
+G2L["14"].Text = "Noclip: OFF [Y]"
+G2L["14"].Position = UDim2.new(0, 12, 0, 155)
+Instance.new("UICorner", G2L["14"])
+
+G2L["16"] = Instance.new("ImageLabel", G2L["2"])
+G2L["16"].BorderSizePixel = 0
+G2L["16"].BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+G2L["16"].Image = "rbxassetid://1097635747"
+G2L["16"].Size = UDim2.new(0, 95, 0, 95)
+G2L["16"].BackgroundTransparency = 1
+G2L["16"].Position = UDim2.new(0, 125, 0, -65)
+
+local Main = G2L["2"]
+local TitleBar = G2L["5"]
+local FlyButton = G2L["8"]
+local SpeedBox = G2L["b"]
+local SliderHit = G2L["d"]
+local SliderBar = G2L["e"]
+local SliderFill = G2L["10"]
+local Knob = G2L["12"]
+local NoclipButton = G2L["14"]
+
 local function setSpeed(value)
 	value = math.clamp(math.floor(value + 0.5), MIN_SPEED, MAX_SPEED)
 	flySpeed = value
@@ -152,32 +180,27 @@ local function setSpeed(value)
 	Knob.Position = UDim2.new(alpha, 0, 0.5, 0)
 	SpeedBox.Text = tostring(value)
 end
- 
 setSpeed(flySpeed)
- 
--- Slider dragging
+
 local sliding = false
- 
 local function updateSlider(input)
 	local alpha = math.clamp((input.Position.X - SliderBar.AbsolutePosition.X) / SliderBar.AbsoluteSize.X, 0, 1)
 	setSpeed(MIN_SPEED + alpha * (MAX_SPEED - MIN_SPEED))
 end
- 
+
 SliderHit.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		sliding = true
 		updateSlider(input)
 	end
 end)
- 
+
 SpeedBox.FocusLost:Connect(function()
-	local n = tonumber(SpeedBox.Text)
-	setSpeed(n or flySpeed)
+	setSpeed(tonumber(SpeedBox.Text) or flySpeed)
 end)
- 
--- Window dragging (by title bar)
+
 local dragging, dragStart, startPos = false, nil, nil
- 
+
 TitleBar.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		dragging = true
@@ -185,7 +208,7 @@ TitleBar.InputBegan:Connect(function(input)
 		startPos = Main.Position
 	end
 end)
- 
+
 UserInputService.InputChanged:Connect(function(input)
 	if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
 		return
@@ -194,157 +217,207 @@ UserInputService.InputChanged:Connect(function(input)
 		updateSlider(input)
 	elseif dragging then
 		local delta = input.Position - dragStart
-		Main.Position = UDim2.new(
-			startPos.X.Scale, startPos.X.Offset + delta.X,
-			startPos.Y.Scale, startPos.Y.Offset + delta.Y
-		)
+		Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 	end
 end)
- 
+
 UserInputService.InputEnded:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		sliding = false
 		dragging = false
 	end
 end)
- 
---------------------------------------------------------------------
--- Fly logic
---------------------------------------------------------------------
-local function updateButton()
+
+local controlsModule = nil
+local warnedFallback = false
+
+local function getMoveVector()
+	if not controlsModule then
+		pcall(function()
+			local scripts = player:FindFirstChild("PlayerScripts")
+			local module = scripts and scripts:FindFirstChild("PlayerModule")
+			if module then
+				controlsModule = require(module):GetControls()
+			end
+		end)
+	end
+	if controlsModule then
+		local ok, v = pcall(function()
+			return controlsModule:GetMoveVector()
+		end)
+		if ok and v then return v end
+	end
+
+	if not warnedFallback then
+		warnedFallback = true
+		warn("[Fly] PlayerModule controls unavailable, using WASD fallback")
+	end
+	local x = (UserInputService:IsKeyDown(Enum.KeyCode.D) and 1 or 0) - (UserInputService:IsKeyDown(Enum.KeyCode.A) and 1 or 0)
+	local z = (UserInputService:IsKeyDown(Enum.KeyCode.S) and 1 or 0) - (UserInputService:IsKeyDown(Enum.KeyCode.W) and 1 or 0)
+	return Vector3.new(x, 0, z)
+end
+
+local function updateFlyButton()
 	if isFlying then
-		ToggleButton.Text = "FLY: ON  [F]"
-		ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 200, 40)
+		FlyButton.Text = "FLY: ON  [F]"
+		FlyButton.BackgroundColor3 = Color3.fromRGB(40, 200, 40)
 	else
-		ToggleButton.Text = "FLY: OFF  [F]"
-		ToggleButton.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
+		FlyButton.Text = "FLY: OFF  [F]"
+		FlyButton.BackgroundColor3 = Color3.fromRGB(46, 46, 53)
 	end
 end
- 
+
 local function cleanupFly()
 	isFlying = false
-	updateButton()
- 
-	if flyConnection then
-		flyConnection:Disconnect()
-		flyConnection = nil
-	end
+	updateFlyButton()
+
+	if flyConnection then flyConnection:Disconnect() flyConnection = nil end
 	if bodyVel then bodyVel:Destroy() bodyVel = nil end
 	if bodyGyro then bodyGyro:Destroy() bodyGyro = nil end
 	if idleTrack then idleTrack:Stop() end
 	if moveTrack then moveTrack:Stop() end
- 
-	if windSound then
-		windSound:Stop()
-		windSound:Destroy()
-		windSound = nil
-	end
- 
+	if windSound then windSound:Stop() windSound:Destroy() windSound = nil end
+
 	local char = player.Character
-	if char and char:FindFirstChild("Humanoid") then
-		char.Humanoid.PlatformStand = false
-	end
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum then hum.PlatformStand = false end
 end
- 
+
 local function toggleFly()
-	local char = player.Character
-	if not char or not char:FindFirstChild("HumanoidRootPart") or not char:FindFirstChild("Humanoid") then return end
- 
-	local hrp = char.HumanoidRootPart
-	local hum = char.Humanoid
-	local animator = hum:FindFirstChildOfClass("Animator") or hum
- 
 	if isFlying then
 		cleanupFly()
 		return
 	end
- 
+
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hrp or not hum then return end
+
+	local animator = hum:FindFirstChildOfClass("Animator") or hum
+
 	isFlying = true
-	updateButton()
- 
-	-- Load Animations
+	updateFlyButton()
+
+	print("[Fly] enabled, speed =", flySpeed)
+
+	local rigName = (hum.RigType == Enum.HumanoidRigType.R6) and "R6" or "R15"
+	local animSet = ANIMS[rigName]
+	print("[Fly] rig type =", rigName)
+
 	local idleAnim = Instance.new("Animation")
-	idleAnim.AnimationId = IDLE_ANIM_ID
+	idleAnim.AnimationId = animSet.idle
 	local moveAnim = Instance.new("Animation")
-	moveAnim.AnimationId = MOVE_ANIM_ID
- 
+	moveAnim.AnimationId = animSet.move
 	idleTrack = animator:LoadAnimation(idleAnim)
 	moveTrack = animator:LoadAnimation(moveAnim)
- 
-	-- Setup Movers
+
 	bodyVel = Instance.new("BodyVelocity")
 	bodyVel.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
 	bodyVel.Velocity = Vector3.zero
 	bodyVel.Parent = hrp
- 
+
 	bodyGyro = Instance.new("BodyGyro")
 	bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
 	bodyGyro.P = 10000
 	bodyGyro.CFrame = camera.CFrame
 	bodyGyro.Parent = hrp
- 
+
 	hum.PlatformStand = true
 	idleTrack:Play()
- 
-	-- Wind SFX (loops while moving)
+
 	windSound = Instance.new("Sound")
-	windSound.SoundId = wind
+	windSound.SoundId = WIND_SFX
 	windSound.Looped = true
 	windSound.Volume = 1.2
 	windSound.Parent = hrp
- 
-	-- Movement Loop
+
 	flyConnection = RunService.RenderStepped:Connect(function()
-		if not char or hum.Health <= 0 then
+		if hum.Health <= 0 or not hrp.Parent then
 			cleanupFly()
 			return
 		end
- 
-		-- Read joystick / WASD input via the default control module
-		local moveVector = Vector3.zero
-		pcall(function()
-			local controls = require(player.PlayerScripts.PlayerModule):GetControls()
-			moveVector = controls:GetMoveVector()
-		end)
- 
+
+		local moveVector = getMoveVector()
+
 		if moveVector.Magnitude > 0.01 then
 			if not moveTrack.IsPlaying then
 				idleTrack:Stop()
 				moveTrack:Play()
 			end
- 
-			if windSound and not windSound.Playing then
-				windSound:Play()
-			end
- 
-			local camCFrame = camera.CFrame
-			local flyDir = (camCFrame.RightVector * moveVector.X) + (camCFrame.LookVector * -moveVector.Z)
-			bodyVel.Velocity = flyDir * flySpeed -- reads the live speed value
- 
+			if windSound and not windSound.Playing then windSound:Play() end
+
+			local cf = camera.CFrame
+			local flyDir = (cf.RightVector * moveVector.X) + (cf.LookVector * -moveVector.Z)
+			bodyVel.Velocity = flyDir * flySpeed
 			bodyGyro.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + flyDir)
 		else
 			if not idleTrack.IsPlaying then
 				moveTrack:Stop()
 				idleTrack:Play()
 			end
- 
-			if windSound and windSound.Playing then
-				windSound:Stop()
-			end
- 
+			if windSound and windSound.Playing then windSound:Stop() end
+
 			bodyVel.Velocity = Vector3.zero
 			bodyGyro.CFrame = camera.CFrame
 		end
 	end)
 end
- 
-ToggleButton.MouseButton1Click:Connect(toggleFly)
- 
--- Hotkey (ignored while typing in a textbox / chat)
+
+local function updateNoclipButton()
+	if noclipOn then
+		NoclipButton.Text = "Noclip: ON [Y]"
+		NoclipButton.BackgroundColor3 = Color3.fromRGB(40, 200, 40)
+	else
+		NoclipButton.Text = "Noclip: OFF [Y]"
+		NoclipButton.BackgroundColor3 = Color3.fromRGB(46, 46, 53)
+	end
+end
+
+local function restoreCollisions()
+	for part, wasCollidable in pairs(originalCollide) do
+		if part and part.Parent then
+			part.CanCollide = wasCollidable
+		end
+	end
+	table.clear(originalCollide)
+end
+
+local function toggleNoclip()
+	noclipOn = not noclipOn
+	updateNoclipButton()
+
+	if noclipOn then
+		noclipConnection = RunService.Stepped:Connect(function()
+			local char = player.Character
+			if not char then return end
+			for _, part in ipairs(char:GetDescendants()) do
+				if part:IsA("BasePart") then
+					if originalCollide[part] == nil then
+						originalCollide[part] = part.CanCollide
+					end
+					part.CanCollide = false
+				end
+			end
+		end)
+	else
+		if noclipConnection then noclipConnection:Disconnect() noclipConnection = nil end
+		restoreCollisions()
+	end
+end
+
+player.CharacterAdded:Connect(function()
+	table.clear(originalCollide)
+end)
+
+FlyButton.MouseButton1Click:Connect(toggleFly)
+NoclipButton.MouseButton1Click:Connect(toggleNoclip)
+
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
-	if input.KeyCode == HOTKEY then
+	if input.KeyCode == FLY_KEY then
 		toggleFly()
+	elseif input.KeyCode == NOCLIP_KEY then
+		toggleNoclip()
 	end
 end)
- 
